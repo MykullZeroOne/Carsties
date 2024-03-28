@@ -3,6 +3,8 @@ using AuctionService.DTOs;
 using AuctionService.Entities;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using Contracts;
+using MassTransit;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,10 +12,11 @@ namespace AuctionService.Controllers;
 
 /// <summary>
 ///     Represents a controller for managing auctions.
+///     Parameters are passed to the class like a method overload acting as the default  controller for the class.
 /// </summary>
 [ApiController]
 [Route ( "api/auctions" )]
-public class AuctionsController ( AuctionDbContext context, IMapper mapper ) : ControllerBase
+public class AuctionsController ( AuctionDbContext context, IMapper mapper, IPublishEndpoint publishEndpoint ) : ControllerBase
     {
         // Returns Data in JSON Format
 
@@ -57,17 +60,38 @@ public class AuctionsController ( AuctionDbContext context, IMapper mapper ) : C
         [HttpPost]
         public async Task< ActionResult< AuctionDto > > CreateAuction ( CreateAuctionDto auctionDto )
             {
+                // TODO: add current user as seller
                 var auction = mapper.Map< Auction > ( auctionDto );
                 auction.Seller = "Test";
                 context.Auctions.Add ( auction );
 
-                // TODO: add current user as seller
 
+                var newAuction = mapper.Map< AuctionDto > ( auction );
+                await publishEndpoint.Publish ( mapper.Map< AuctionCreated > ( newAuction ) );
                 var result = await context.SaveChangesAsync ( ) > 0;
 
                 if ( ! result ) return BadRequest ( "Could not save changes to DB" );
 
-                return CreatedAtAction ( nameof ( GetAuctionById ), new { auction.Id }, mapper.Map< AuctionDto > ( auction ) );
+                /************************************************************************************
+                 *                                                                                  *
+                 * This block of code is part of the `CreateAuction` operation where a new auction  *
+                 * is being created. In this specific line, the method `CreatedAtAction` is called  *
+                 * to generate a `201` HTTP status response, indicating that a new resource has     *
+                 * been created successfully.                                                       *
+                 *                                                                                  *
+                 * The `nameof` keyword is used to avoid hard-coding the action name for the        *
+                 * location header. It is part of the `CreatedAtAction` method and references the   *
+                 * `GetAuctionById` action.                                                         *
+                 *                                                                                  *
+                 * The second parameter is the route values. In this case, it is a new object       *
+                 * containing the ID of the newly created auction.                                  *
+                 *                                                                                  *
+                 * The third parameter is the value that needs to be included in the body of the    *
+                 * response message sent to the client. In this context, it is the object of the    *
+                 * newly created auction.                                                           *
+                 *                                                                                  *
+                 ************************************************************************************/
+                return CreatedAtAction ( nameof ( GetAuctionById ), new { auction.Id }, newAuction );
             }
 
         /// <summary>
@@ -91,6 +115,8 @@ public class AuctionsController ( AuctionDbContext context, IMapper mapper ) : C
                 auction.Item.Mileage = updateAuctionDto.Mileage ?? auction.Item.Mileage;
                 auction.Item.Year    = updateAuctionDto.Year    ?? auction.Item.Year;
 
+                var updateAuction = mapper.Map< AuctionDto > ( auction );
+                await publishEndpoint.Publish ( mapper.Map< AuctionUpdated > ( updateAuction ) );
                 var result = await context.SaveChangesAsync ( ) > 0;
 
                 if ( result ) return Ok ( );
@@ -115,7 +141,7 @@ public class AuctionsController ( AuctionDbContext context, IMapper mapper ) : C
                 // TODO: check Seller == UserName
 
                 context.Auctions.Remove ( auction );
-
+                await publishEndpoint.Publish< AuctionDeleted > ( new { Id = auction.Id.ToString ( ) } );
                 var result = await context.SaveChangesAsync ( ) > 0;
 
                 if ( ! result ) return BadRequest ( "Could not update DB" );

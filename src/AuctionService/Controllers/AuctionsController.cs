@@ -5,6 +5,7 @@ using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Contracts;
 using MassTransit;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -57,12 +58,15 @@ public class AuctionsController ( AuctionDbContext context, IMapper mapper, IPub
         /// </summary>
         /// <param name="auctionDto">The auction details.</param>
         /// <returns>The created auction.</returns>
+        [Authorize]
         [HttpPost]
         public async Task< ActionResult< AuctionDto > > CreateAuction ( CreateAuctionDto auctionDto )
             {
                 // TODO: add current user as seller
                 var auction = mapper.Map< Auction > ( auctionDto );
-                auction.Seller = "Test";
+
+                if ( User.Identity != null ) auction.Seller = User.Identity.Name;
+
                 context.Auctions.Add ( auction );
 
 
@@ -100,6 +104,7 @@ public class AuctionsController ( AuctionDbContext context, IMapper mapper, IPub
         /// <param name="id">The ID of the auction to update.</param>
         /// <param name="updateAuctionDto">The data to update the auction with.</param>
         /// <returns>Returns an IActionResult indicating the result of the update operation. Returns 200 (OK) if the update is successful, and 400 (Bad Request) otherwise.</returns>
+        [Authorize]
         [HttpPut ( "{id:guid}" )]
         public async Task< ActionResult > UpdateAuction ( Guid id, UpdateAuctionDto updateAuctionDto )
             {
@@ -107,7 +112,7 @@ public class AuctionsController ( AuctionDbContext context, IMapper mapper, IPub
 
                 if ( auction == null ) return NotFound ( );
 
-                // TODO: check Seller == UserName
+                if ( auction.Seller != User.Identity.Name ) return Forbid ( ); //http 403 responce
 
                 auction.Item.Make    = updateAuctionDto.Make    ?? auction.Item.Make;
                 auction.Item.Model   = updateAuctionDto.Model   ?? auction.Item.Model;
@@ -115,8 +120,8 @@ public class AuctionsController ( AuctionDbContext context, IMapper mapper, IPub
                 auction.Item.Mileage = updateAuctionDto.Mileage ?? auction.Item.Mileage;
                 auction.Item.Year    = updateAuctionDto.Year    ?? auction.Item.Year;
 
-                var updateAuction = mapper.Map< AuctionDto > ( auction );
-                await publishEndpoint.Publish ( mapper.Map< AuctionUpdated > ( updateAuction ) );
+
+                await publishEndpoint.Publish ( mapper.Map< AuctionUpdated > ( auction ) );
                 var result = await context.SaveChangesAsync ( ) > 0;
 
                 if ( result ) return Ok ( );
@@ -131,6 +136,7 @@ public class AuctionsController ( AuctionDbContext context, IMapper mapper, IPub
         /// - If the auction is not found, returns a NotFound result.
         /// - If the operation fails, returns a BadRequest result with an error message.
         /// /
+        [Authorize]
         [HttpDelete ( "{id:guid}" )]
         public async Task< ActionResult > DeleteAuction ( Guid id )
             {
@@ -138,7 +144,7 @@ public class AuctionsController ( AuctionDbContext context, IMapper mapper, IPub
 
                 if ( auction == null ) return NotFound ( );
 
-                // TODO: check Seller == UserName
+                if ( auction.Seller != User.Identity.Name ) return Forbid ( );
 
                 context.Auctions.Remove ( auction );
                 await publishEndpoint.Publish< AuctionDeleted > ( new { Id = auction.Id.ToString ( ) } );
